@@ -14,7 +14,7 @@ All client requests are forwarded through the Routing VPS to the Main VPS.
 ### Routing-VPS
 wget https://raw.githubusercontent.com/kervenov/ip-forwarding/main/routing-vps.sh
 
-chmod +x routing-vps-setup.sh
+chmod +x routing-vps.sh
 
 ./routing-vps.sh
 
