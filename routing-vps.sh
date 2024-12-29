@@ -22,8 +22,9 @@ echo "Allowing forwarding rules..."
 iptables -A FORWARD -p tcp --dport 1194 -d $MAIN_VPS_IP -j ACCEPT
 iptables -A FORWARD -p udp --dport 1194 -d $MAIN_VPS_IP -j ACCEPT
 
-# Save iptables rules
+# Ensure the directory exists
 echo "Saving iptables rules..."
+mkdir -p /etc/iptables
 iptables-save > /etc/iptables/rules.v4
 
 echo "Routing VPS setup completed!"
