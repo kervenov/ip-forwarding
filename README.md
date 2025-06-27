@@ -16,11 +16,11 @@ wget https://raw.githubusercontent.com/kervenov/ip-forwarding/main/routing-vps.s
 
 chmod +x routing-vps.sh
 
-./routing-vps.sh
+sudo ./routing-vps.sh
 
 ### Main-VPS
 wget https://raw.githubusercontent.com/kervenov/ip-forwarding/main/main-vps.sh
 
 chmod +x main-vps.sh
 
-./main-vps.sh
+sudo ./main-vps.sh
