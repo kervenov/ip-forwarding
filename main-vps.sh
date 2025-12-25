@@ -1,18 +1,33 @@
 #!/bin/bash
 
+read -p "Enter the Main VPS IP: " MAIN_VPS_IP
+
 # Enable IP forwarding
-echo "Enabling IP forwarding..."
 echo 1 > /proc/sys/net/ipv4/ip_forward
 sysctl -w net.ipv4.ip_forward=1
 
-# Ensure responses dynamically return to the Routing VPS
-echo "Allowing forwarding rules for dynamic response handling..."
-iptables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
-iptables -A FORWARD -j ACCEPT
+# Detect main interface
+NET_IFACE=$(ip route get 8.8.8.8 | awk '{print $5; exit}')
 
-# Save iptables rules
-echo "Saving iptables rules..."
+# Flush rules
+iptables -t nat -F
+iptables -F FORWARD
+
+# DNAT only for NEW incoming connections
+iptables -t nat -A PREROUTING -m conntrack --ctstate NEW -j DNAT --to-destination "$MAIN_VPS_IP"
+
+# SNAT / MASQUERADE (ONCE)
+iptables -t nat -A POSTROUTING -o "$NET_IFACE" -j MASQUERADE
+
+# Fast path for established connections
+iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+# Allow new connections to main VPS
+iptables -A FORWARD -d "$MAIN_VPS_IP" -m conntrack --ctstate NEW -j ACCEPT
+iptables -A FORWARD -s "$MAIN_VPS_IP" -j ACCEPT
+
+# Save rules
 mkdir -p /etc/iptables
 iptables-save > /etc/iptables/rules.v4
 
-echo "Main VPS setup completed!"
+echo "✅ Optimized routing setup completed"
