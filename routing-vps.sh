@@ -1,45 +1,33 @@
 #!/bin/bash
 
-# Prompt for the Main VPS IP
 read -p "Enter the Main VPS IP: " MAIN_VPS_IP
 
-# Enable IP forwarding at runtime
-echo "Enabling IP forwarding..."
+# Enable IP forwarding
 echo 1 > /proc/sys/net/ipv4/ip_forward
 sysctl -w net.ipv4.ip_forward=1
 
-# Enable IP forwarding permanently
-if ! grep -q "^net.ipv4.ip_forward=1" /etc/sysctl.conf; then
-    echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
-fi
-
-# Detect main network interface
+# Detect main interface
 NET_IFACE=$(ip route get 8.8.8.8 | awk '{print $5; exit}')
-echo "Detected network interface: $NET_IFACE"
 
-# Clear previous NAT rules (optional: avoid duplicates)
+# Flush rules
 iptables -t nat -F
 iptables -F FORWARD
 
-# Set up full NAT masquerading for outgoing traffic
-echo "Setting up NAT for outgoing traffic..."
+# DNAT only for NEW incoming connections
+iptables -t nat -A PREROUTING -m conntrack --ctstate NEW -j DNAT --to-destination "$MAIN_VPS_IP"
+
+# SNAT / MASQUERADE (ONCE)
 iptables -t nat -A POSTROUTING -o "$NET_IFACE" -j MASQUERADE
 
-# Forward ALL incoming traffic (all ports & protocols) to Main VPS
-echo "Forwarding ALL traffic to Main VPS ($MAIN_VPS_IP)..."
-iptables -t nat -A PREROUTING -j DNAT --to-destination "$MAIN_VPS_IP"
+# Fast path for established connections
+iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
-# SNAT to ensure responses go back through this VPS
-iptables -t nat -A POSTROUTING -j MASQUERADE
-
-# Allow forwarding rules for any protocol to/from Main VPS
-echo "Allowing forwarding rules..."
-iptables -A FORWARD -d "$MAIN_VPS_IP" -j ACCEPT
+# Allow new connections to main VPS
+iptables -A FORWARD -d "$MAIN_VPS_IP" -m conntrack --ctstate NEW -j ACCEPT
 iptables -A FORWARD -s "$MAIN_VPS_IP" -j ACCEPT
 
-# Save rules for persistence (requires iptables-persistent)
-echo "Saving iptables rules..."
+# Save rules
 mkdir -p /etc/iptables
 iptables-save > /etc/iptables/rules.v4
 
-echo "✅ Routing VPS setup completed!"
+echo "✅ Optimized routing setup completed"
