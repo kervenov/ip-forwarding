@@ -1,53 +1,45 @@
 #!/bin/bash
+set -e
 
-read -p "Enter the Main VPS IP: " MAIN_VPS_IP
+read -p "Main VPS IPv4: " MAIN_VPS
 
-echo "▶ Enabling IP forwarding..."
-echo 1 > /proc/sys/net/ipv4/ip_forward 2>/dev/null
-sysctl -w net.ipv4.ip_forward=1 2>/dev/null
+echo "[+] Switching to iptables-legacy (Ubuntu safe)"
+update-alternatives --set iptables /usr/sbin/iptables-legacy >/dev/null 2>&1 || true
+update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy >/dev/null 2>&1 || true
 
-if ! grep -q "^net.ipv4.ip_forward=1" /etc/sysctl.conf; then
-    echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
+# Disable ufw if running
+if systemctl is-active --quiet ufw; then
+  echo "[+] Disabling UFW"
+  ufw disable
 fi
 
-echo "▶ Tuning conntrack for high traffic..."
-# Check if nf_conntrack exists before applying
-if [ -d /proc/sys/net/netfilter ]; then
-    sysctl -w net.netfilter.nf_conntrack_max=262144 2>/dev/null
-    sysctl -w net.netfilter.nf_conntrack_tcp_timeout_established=7200 2>/dev/null
+# Enable IPv4 forwarding
+sysctl -w net.ipv4.ip_forward=1 >/dev/null
+grep -q net.ipv4.ip_forward /etc/sysctl.conf || \
+echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
 
-    grep -q "^net.netfilter.nf_conntrack_max" /etc/sysctl.conf || \
-    echo "net.netfilter.nf_conntrack_max=262144" >> /etc/sysctl.conf
+# Detect interface
+IFACE=$(ip -4 route show default | awk '{print $5}' | head -n1)
+[ -z "$IFACE" ] && IFACE=$(ls /sys/class/net | grep -v lo | head -n1)
 
-    grep -q "^net.netfilter.nf_conntrack_tcp_timeout_established" /etc/sysctl.conf || \
-    echo "net.netfilter.nf_conntrack_tcp_timeout_established=7200" >> /etc/sysctl.conf
-else
-    echo "⚠ nf_conntrack settings not found, skipping (likely a container)"
-fi
+echo "[+] Interface: $IFACE"
 
-echo "▶ Detecting main network interface..."
-NET_IFACE=$(ip route get 8.8.8.8 | awk '{print $5; exit}')
-echo "Detected interface: $NET_IFACE"
+# Flush rules
+iptables -t nat -F
+iptables -F FORWARD
 
-echo "▶ Flushing previous iptables rules..."
-iptables -t nat -F 2>/dev/null
-iptables -F FORWARD 2>/dev/null
+# Policies
+iptables -P FORWARD ACCEPT
 
-echo "▶ Setting DNAT (NEW connections only)..."
-iptables -t nat -A PREROUTING -m conntrack --ctstate NEW -j DNAT --to-destination "$MAIN_VPS_IP" 2>/dev/null
+# NAT rules
+iptables -t nat -A PREROUTING -j DNAT --to-destination "$MAIN_VPS"
+iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
 
-echo "▶ Setting SNAT / MASQUERADE..."
-iptables -t nat -A POSTROUTING -o "$NET_IFACE" -j MASQUERADE 2>/dev/null
+# Forward allow
+iptables -A FORWARD -d "$MAIN_VPS" -j ACCEPT
+iptables -A FORWARD -s "$MAIN_VPS" -j ACCEPT
 
-echo "▶ Allowing established connections (fast path)..."
-iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null
+# Persist
+iptables-save > /etc/iptables.rules 2>/dev/null || true
 
-echo "▶ Allowing forwarding to/from main VPS..."
-iptables -A FORWARD -d "$MAIN_VPS_IP" -m conntrack --ctstate NEW -j ACCEPT 2>/dev/null
-iptables -A FORWARD -s "$MAIN_VPS_IP" -j ACCEPT 2>/dev/null
-
-echo "▶ Saving iptables rules..."
-mkdir -p /etc/iptables
-iptables-save > /etc/iptables/rules.v4 2>/dev/null
-
-echo "✅ Forwarding VPS fully optimized & rotation-ready!"
+echo "✅ Ubuntu 20+ forwarding ACTIVE"
