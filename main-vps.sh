@@ -1,19 +1,18 @@
 #!/bin/bash
-set -e
 
-echo "[+] Main VPS normal server mode"
+# Enable IP forwarding
+echo "Enabling IP forwarding..."
+echo 1 > /proc/sys/net/ipv4/ip_forward
+sysctl -w net.ipv4.ip_forward=1
 
-# IP forwarding kapalı bile olabilir
-sysctl -w net.ipv4.ip_forward=0 >/dev/null
+# Ensure responses dynamically return to the Routing VPS
+echo "Allowing forwarding rules for dynamic response handling..."
+iptables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -A FORWARD -j ACCEPT
 
-# Firewall varsa sadece 80/443 aç
-iptables -F INPUT
-iptables -P INPUT DROP
+# Save iptables rules
+echo "Saving iptables rules..."
+mkdir -p /etc/iptables
+iptables-save > /etc/iptables/rules.v4
 
-iptables -A INPUT -i lo -j ACCEPT
-iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-iptables -A INPUT -p tcp -m multiport --dports 80,443 -j ACCEPT
-
-iptables-save > /etc/iptables.rules
-
-echo "✅ Main VPS READY"
+echo "Main VPS setup completed!"
