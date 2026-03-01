@@ -1,43 +1,33 @@
 #!/bin/bash
-set -e
 
-read -p "Main VPS IPv4: " MAIN_VPS
+# Prompt for the Main VPS IP
+read -p "Enter the Main VPS IP: " MAIN_VPS_IP
 
-# Detect interface
-IFACE=$(ip route get 1 | awk '{print $5; exit}')
-SRC_IP=$(ip -4 addr show "$IFACE" | awk '/inet /{print $2}' | cut -d/ -f1 | head -n1)
+# Enable IP forwarding
+echo "Enabling IP forwarding..."
+echo 1 > /proc/sys/net/ipv4/ip_forward
+sysctl -w net.ipv4.ip_forward=1
 
-echo "[+] Interface: $IFACE"
-echo "[+] Forwarding IP: $SRC_IP"
+# Set up NAT for outgoing traffic (MASQUERADE for all traffic)
+echo "Setting up NAT for outgoing traffic..."
+iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
 
-echo "[+] Enabling IP forwarding"
-sysctl -w net.ipv4.ip_forward=1 >/dev/null
+# Forward all incoming traffic to the Main VPS (dynamic handling of all ports and protocols)
+echo "Forwarding all traffic to Main VPS ($MAIN_VPS_IP)..."
+iptables -t nat -A PREROUTING -j DNAT --to-destination $MAIN_VPS_IP
 
-echo "[+] Disabling rp_filter"
-sysctl -w net.ipv4.conf.all.rp_filter=0 >/dev/null
-sysctl -w net.ipv4.conf.default.rp_filter=0 >/dev/null
-sysctl -w net.ipv4.conf.$IFACE.rp_filter=0 >/dev/null
+# SNAT to ensure responses go back through Routing VPS
+echo "Setting up SNAT to ensure proper routing of responses..."
+iptables -t nat -A POSTROUTING -j MASQUERADE
 
-# Flush old rules
-iptables -t nat -F
-iptables -F FORWARD
+# Allow forwarding rules
+echo "Allowing forwarding rules..."
+iptables -A FORWARD -d $MAIN_VPS_IP -j ACCEPT
+iptables -A FORWARD -s $MAIN_VPS_IP -j ACCEPT
 
-# Default policy
-iptables -P FORWARD DROP
+# Save iptables rules
+echo "Saving iptables rules..."
+mkdir -p /etc/iptables
+iptables-save > /etc/iptables/rules.v4
 
-# Allow established
-iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-
-# DNAT (client → main)
-iptables -t nat -A PREROUTING -i "$IFACE" -p tcp --dport 80  -j DNAT --to-destination "$MAIN_VPS":80
-iptables -t nat -A PREROUTING -i "$IFACE" -p tcp --dport 443 -j DNAT --to-destination "$MAIN_VPS":443
-
-# Allow forward to main
-iptables -A FORWARD -d "$MAIN_VPS" -p tcp -m multiport --dports 80,443 -j ACCEPT
-
-# SNAT (EN KRİTİK NOKTA)
-iptables -t nat -A POSTROUTING -d "$MAIN_VPS" -p tcp -m multiport --dports 80,443 -j SNAT --to-source "$SRC_IP"
-
-iptables-save > /etc/iptables.rules
-
-echo "✅ Forwarding VPS READY"
+echo "Routing VPS setup completed!"
